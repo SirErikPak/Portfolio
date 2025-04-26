@@ -1,0 +1,1955 @@
+---
+title: "DSC424 Project HR Attrition"
+author: "Team Data Crew"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import, message=FALSE,include=FALSE}
+
+library(tidyverse)
+library(psych)
+library(caret)
+library(ggplot2)
+library(ggpubr)
+library(GGally)
+library(leaps)
+library(glmnet)
+library(car)
+library(lmtest)
+library(lm.beta)
+library(rpart)
+library(corrplot)
+library(ROSE)
+library(lavaan)
+
+```
+
+# Description :
+This is a dataset to predict attrition of valuable Employees. In order to proceed with the data analysis we need some data preprocessing and data transformation where ever required. The Goal of this documnet is to present a distince aspect of the data to begin with modeling of the data.
+
+## Dataset / Preprocessing Suggestions::
+The dataset consists of 35 columns with 26 Integer , 6 String and 3 Boolean with our response variable 'Attrition'.
+
+<li>We checked if there were any NA's in the data and luckily we don't have any.</li>
+<li>We have binary variables like **'Attrition', 'Gender', 'OverTime'** which we need to convert to factor.</li>
+<li>We have **'BusinessTravel', 'Department', 'EducationField', 'JobRole', 'MaritalStatus'** as categorical so we can convert those to factors.
+<li>We have some columns which are not necessarily be used for our analysis like **'EmployeeNumber', 'EmployeeCount', 'Over18', 'StandardHours'** and we can drop these columns.
+
+# Data preprocessin
+```{r Load Data, message=FALSE}
+
+# load the data
+hrData <- read.csv("HREmployee.csv")
+
+# check the NA's
+sum(is.na(hrData))
+
+# remove unwanted column
+# EmployeeNumber, EmployeeCount, Over18, StandardHours
+hrData <- hrData[,-c(9, 10, 22, 27)]
+
+# convert attrition to numeric
+hrData$Attrition <- ifelse(hrData$Attrition=="Yes",1,0)
+
+# Convert attrition to a factor 
+hrData$Attrition <- as.factor(hrData$Attrition)
+
+# covert columns to factors
+hrData$Department <- as.factor(hrData$Department)
+hrData$EducationField <- as.factor(hrData$EducationField)
+hrData$JobRole <- as.factor(hrData$JobRole)
+hrData$MaritalStatus <- as.factor(hrData$MaritalStatus)
+hrData$Gender <- as.factor(hrData$Gender)
+hrData$OverTime <- as.factor(hrData$OverTime)
+hrData$BusinessTravel <- as.factor(hrData$BusinessTravel)
+
+# summary of data
+summary(hrData)
+
+```
+
+** NOTE we did not convert MonthRate to log as it has continious distribution
+
+```{r colname, message=FALSE}
+
+# convert Monthly Income to log
+hrData$logMonthInc <- log(hrData$MonthlyIncome) # col 17
+hrData <- hrData[,-17]
+
+# change the coloumn names
+colnames(hrData) = c("age", "Attr", "BusTrvl", "DlyRate", "Dept", "DistFrmHm", "Edu", "EduField", "EnvSat", 
+                     "Gender", "HrRate", "JobInvl", "JobLvl", "JobRole", "JobSat", "MrgStatus",
+                     "MonthRate", "NumCompWrk", "OverTime", "PercSalHike", "PerfRate", "RelnSat", "StkOpLvl",
+                     "TotWrkYr", "TrnTimeLastYr", "WrkLifeBal", "YrsAtComp", "YrsInCurRole", "YrsLstProm",
+                     "YrsCurMngr", "logMonthInc" )
+
+```
+
+# Visualization before oversampling
+
+```{r visual, message=FALSE}
+
+# histogram of marital status
+mar_hist <- ggplot(hrData, aes(x = MrgStatus)) +
+                geom_bar(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+# histogram of log of monthly Income
+mI_hist <-  ggplot(hrData, aes(x = logMonthInc)) +
+                geom_histogram(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# histogram of monthly rate
+mr_hist <-  ggplot(hrData, aes(x = MonthRate)) +
+                geom_histogram(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# box plot of log monthly income to attrition
+att_lgMI_box <-  ggplot(hrData, aes(x = Attr, y= logMonthInc)) +
+                    geom_boxplot(color="black", fill="skyblue") +
+                    theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# box Plot of age to attrition
+att_age_box <-  ggplot(hrData, aes(x = Attr, y= age)) +
+                  geom_boxplot(color="black", fill="skyblue") +
+                  theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# display histogram and box plot
+ggarrange(mar_hist, mI_hist, mr_hist, att_lgMI_box, att_age_box, nrow = 3, ncol = 2 )
+
+# stack bar of marital status to attrition
+attr_mrg_stk <- ggplot(hrData, aes(x=MrgStatus, fill=Attr)) + 
+                  geom_bar(position="stack")
+
+# stack bar of gender to attrition
+attr_gend_stk <- ggplot(hrData, aes(x=Gender, fill=Attr)) + 
+                  geom_bar(position="stack")
+
+# stack bar of gender to overtime
+ovrTm_gender_stk <- ggplot(hrData, aes(x=Gender, fill=OverTime)) + 
+                      geom_bar(position="stack")
+
+# stack bar of overtime to attrition
+ovrTm_attr_stk <- ggplot(hrData, aes(x=OverTime, fill=Attr)) + 
+                    geom_bar(position="stack")
+
+# display stack  plots
+ggarrange(attr_mrg_stk, attr_gend_stk, ovrTm_gender_stk, ovrTm_attr_stk, nrow = 2, ncol = 2 )
+
+```
+
+# Oversampling and creating dummies
+
+```{r dummies, message=FALSE}
+
+set.seed(3010)
+# over sample the data for class imbalance
+oversampled_data <- ovun.sample(Attr ~ ., data = hrData, method = "over", N = 2400)
+
+#hrDataDm <- hrData
+hrDataDm <-oversampled_data$data
+
+# distribution is same 
+summary(hrDataDm)
+
+attach(hrDataDm)
+# dummies for business travel
+hrDataDm$BusTrvl_nonTrvl=(BusTrvl=='Non-Travel')*1
+hrDataDm$BusTrvl_TrvlFreq=(BusTrvl=='Travel_Frequently')*1
+
+# dummies for Department
+hrDataDm$Dept_HR <- (Dept=="Human Resources")*1
+hrDataDm$Dept_sales <- (Dept=="Sales")*1
+
+# dummies for Education field
+hrDataDm$EduField_HR <- (EduField=="Human Resources")*1
+hrDataDm$EduField_LS <- (EduField=="Life Sciences")*1
+hrDataDm$EduField_Mark <- (EduField=="Marketing")*1
+hrDataDm$EduField_Med <- (EduField=="Medical")*1
+hrDataDm$EduField_TechDeg <- (EduField=="Technical Degree")*1
+
+# dummies for JobRole
+hrDataDm$JobRole_HltCare <- (JobRole=="Healthcare Representative")*1
+hrDataDm$JobRole_HR <- (JobRole=="Human Resources")*1
+hrDataDm$JobRole_LabTech <- (JobRole=="Laboratory Technician")*1
+hrDataDm$JobRole_Mngr <- (JobRole=="Manager")*1
+hrDataDm$JobRole_MfgDir <- (JobRole=="Manufacturing Director")*1
+hrDataDm$JobRole_RchDir <- (JobRole=="Research Director")*1
+hrDataDm$JobRole_RchScn <- (JobRole=="Research Scientist")*1
+hrDataDm$JobRole_SlsExec <- (JobRole=="Sales Executive")*1
+
+# dummies for Marital Status
+hrDataDm$MrgStatus_Sing <- (MrgStatus=="Single")*1
+hrDataDm$MrgStatus_Married <- (MrgStatus=="Married")*1
+
+# dummies for Gender
+hrDataDm$Gender_Male <- (Gender=="Male")*1
+
+# dummies for 
+hrDataDm$OverTime_Y <- (OverTime=="Yes")*1
+detach(hrDataDm)
+
+# remove the variable of which dummies are created
+hrDataDm <- hrDataDm[,-c(3,5,8,10,14,16,19)]
+
+
+```
+
+# visualization after over sampling
+
+```{r visualization oversample data, message=FALSE}
+
+# bar plot of attrition before and after oversampling
+att_before <- ggplot(hrData, aes(x = Attr)) +
+                geom_bar(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+att_after <-  ggplot(hrDataDm, aes(x = Attr)) +
+                geom_bar(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+ggarrange(att_before, att_after, nrow = 1, ncol = 2)
+
+# Plot comparisions and distributions after oversampling
+# histogram of marital status
+mar_hist <- ggplot(oversampled_data$data, aes(x = MrgStatus)) +
+                geom_bar(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+# histogram of log of monthly Income
+mI_hist <-  ggplot(oversampled_data$data, aes(x = logMonthInc)) +
+                geom_histogram(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# histogram of monthly rate
+mr_hist <-  ggplot(oversampled_data$data, aes(x = MonthRate)) +
+                geom_histogram(color="black", fill="skyblue") +
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# box plot of log monthly income to attrition
+att_lgMI_box <-  ggplot(oversampled_data$data, aes(x = Attr, y= logMonthInc)) +
+                    geom_boxplot(color="black", fill="skyblue") +
+                    theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# box Plot of age to attrition
+att_age_box <-  ggplot(oversampled_data$data, aes(x = Attr, y= age)) +
+                  geom_boxplot(color="black", fill="skyblue") +
+                  theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# display histogram and box plot
+ggarrange(mar_hist, mI_hist, mr_hist, att_lgMI_box, att_age_box, nrow = 3, ncol = 2 )
+
+# stack bar of marital status to attrition
+attr_mrg_stk <- ggplot(oversampled_data$data, aes(x=MrgStatus, fill=Attr)) +
+                  geom_bar(position="stack")
+
+# stack bar of gender to attrition
+attr_gend_stk <- ggplot(oversampled_data$data, aes(x=Gender, fill=Attr)) +
+                  geom_bar(position="stack")
+
+# stack bar of gender to overtime
+ovrTm_gender_stk <- ggplot(oversampled_data$data, aes(x=Gender, fill=OverTime)) +
+                      geom_bar(position="stack")
+
+# stack bar of overtime to attrition
+ovrTm_attr_stk <- ggplot(oversampled_data$data, aes(x=OverTime, fill=Attr)) +
+                    geom_bar(position="stack")
+
+# display stack  plots
+ggarrange(attr_mrg_stk, attr_gend_stk, ovrTm_gender_stk, ovrTm_attr_stk, nrow = 2, ncol = 2 )
+
+```
+
+# Correlation Test
+
+```{r cortest, message=FALSE}
+# correlation plot of the processed data
+corrplot(cor(hrDataDm[,-2]), method = "ellipse", order = "AOE")
+
+# correlation test 
+x <- corr.test(hrDataDm[,-2], adjust = "none")
+
+# check for non correlated variables
+P <- x$p
+Ptest <- ifelse(P < .05, T, F)
+colSums(Ptest) -1
+
+# we don't have any variable that is not correlated to anything
+# or that is highly correlate to all
+
+```
+
+# Principal component Analysis
+
+Plots says 16 or 18 but we select 13 components to make more sense
+
+```{r pca, message=FALSE}
+set.seed(3010)
+# pca to reduce dimentionality
+emp_pca <- prcomp(hrDataDm[,-2], scale. = TRUE)
+summary(emp_pca)
+plot(emp_pca, npcs=20, main="PCA Var=1 Plot")
+abline(1, 0, col="red")
+
+# 16
+
+# parallel plot analysis
+emp_parallel = fa.parallel(hrDataDm[,-2])
+
+```
+
+# Principal Factor Analysis
+
+TotExp = Total Experience
+MrgProf = Manager Profile
+HRProf = HR Profile
+SlsMarPep = Sales and Marketing People
+MrgStkOpt = Marriage with StockOptions.
+Perf = Performance
+ScEduFld = Science Education Field
+LbTecGend = LabTechnician with Gender ( Dont make much of sense)
+TecDesgFrmHm = TechDesigner away from home
+EduMgr = Education of a Manager
+RchScOvT = Research scientist doing overTime
+TrvlProf = Travel Profile
+SatHrRt = Satisfaction with Hourly Rate
+
+```{r pfa , message=FALSE}
+set.seed(3010)
+# principal factor analysis
+EmpPrincipal = principal(hrDataDm[,-2], rotate="varimax", nfactors=13, n.obs = nrow(hrDataDm))
+print(EmpPrincipal$loadings, cutoff=.4, sort=T)
+
+```
+
+```{r cfa, message=FALSE}
+
+hrDataDmScale <- scale(hrDataDm[,-2])
+#hrDataDmScale$Attr <- hrDataDm$Attr 
+
+emp.model  = 'TotExp =~ YrsAtComp+YrsInCurRole+YrsLstProm+YrsCurMngr+TotWrkYr
+              MrgProf =~ age+JobLvl+TotWrkYr+logMonthInc+NumCompWrk+JobRole_Mngr+JobRole_RchDir
+              HRProf =~ Dept_HR+EduField_HR+JobRole_HR
+              SlsMarPep =~ Dept_sales+EduField_Mark+JobRole_SlsExec
+              MrgStkOpt =~ StkOpLvl+MrgStatus_Sing+MrgStatus_Married
+              LbTecGend =~ JobRole_LabTech + Gender_Male
+              TecDesgFrmHm =~ EduField_TechDeg+DistFrmHm
+              EduMgr =~ Edu+JobRole_Mngr
+              RchScOvT =~ JobRole_RchScn+OverTime_Y+JobRole_HltCare
+              TrvlProf =~ BusTrvl_nonTrvl+BusTrvl_TrvlFreq
+              Perf =~ PercSalHike+PerfRate
+              ScEduFld =~ EduField_LS+EduField_Med
+              SatHrRt =~ JobSat+EnvSat+HrRate
+              '
+
+
+test = cfa(emp.model, data=hrDataDm[,-2],check.gradient = FALSE) %>% suppressWarnings()
+summary(test,fit.measures=TRUE)
+# Chi-square of ~0 so we reject the null hypothesis and the model is inadequate
+
+
+library(semPlot)
+semPaths(test, style="lisrel")
+
+
+```
+
+# Logistic regression model equation:
+log(p/(1-p)) = -0.08 - 0.42(MrgProf) -0.30(TotExp) + 0.21(SlsMarPep) + 0.12(HRProf) - 0.44(MrgStkOpt) - 0.25(LbTecGend)
+                + 0.35(RchScOvT) - 0.11(TrvlProf) - 0.13(SatHrRt)
+              
+
+```{r logistic, message=FALSE}
+
+set.seed(3010)
+# take a copy of the data
+#hrData1 <- hrDataDm
+hrData1 <- as.data.frame(EmpPrincipal$scores[,1:13])
+
+hrData1$Attr <- hrDataDm$Attr
+
+hrData1 <- hrData1 %>% relocate(Attr)
+
+colnames(hrData1) <- c("Attr","TotExp","MrgProf","HRProf","SlsMarPep","MrgStkOpt","Perf","ScEduFld"
+                      ,"LbTecGend","TecDesgFrmHm","EduMgr","RchScOvT","TrvlProf","SatHrRt")
+
+# Partition the data
+index = createDataPartition(y=hrData1$Attr, p=0.7, list=FALSE)
+# get the train set as index
+hrTrain = hrData1[index,]
+# get the test set
+hrTest = hrData1[-index,]
+
+# logistic regression
+fit_glm <- glm(Attr ~ ., data = hrTrain, family=binomial())
+summary(fit_glm)
+
+# logistic regression
+# removed nonsignificant variables
+fit_glm <- glm(Attr ~ .-TecDesgFrmHm-ScEduFld-EduMgr-Perf, data = hrTrain, family="binomial")
+summary(fit_glm)
+
+# multicolinearity check
+# no multicolinearity
+round(vif(fit_glm),2)
+
+# goodness of fit
+# chi square is 246.45 at a probability of < 2.2e-16
+lrtest(fit_glm)
+
+
+# plot of residual vs predicted values
+plot(predict(fit_glm, type="response"), residuals(fit_glm, type="deviance"), main = "Residual vs Predicted")
+abline(a=0, b=0)
+
+```
+
+# function for perfomance matrix
+
+```{r function, message=FALSE}
+source("classify_functions.R")
+
+# set threshold limit
+thr <- 0.5
+
+classMat <- function(model, data, thrs){
+  
+  # predict on test
+p = predict(model, data[,-1], type = "response")
+
+#compute predicted outcome based on probability threshold equal to 0.55
+ypred = classify(p, thrs)
+
+# define y.test= observed values of Y in test set
+y.test = data$Attr
+
+# compares predicted outcomes with actual values in test set
+m_test=compare(ypred, y.test)
+#classification matrix
+return(m_test)
+
+}
+
+perMat <- function(m_test){
+  # performance matrix on test
+sensitivity <- sensitivity(m_test)
+accuracy <- accuracy(m_test)
+precision <- precision(m_test)
+specificity <- specificity(m_test)
+recall <- recall(m_test)
+
+
+df <- data.frame(sensitivity, accuracy, precision, specificity, recall)
+
+return(df)
+
+}
+
+
+```
+
+# Performance of Logistic regression
+
+```{r perfomance glm, message=FALSE}
+
+# performance on train
+clMatTrainGlm <- classMat(fit_glm, hrTrain, thr)
+clMatTrainGlm
+prfTrainGlm <- perMat(clMatTrainGlm)
+prfTrainGlm
+#    sensitivity  accuracy precision specificity    recall
+#1   0.6903305 0.6864961  0.673031   0.6828704 0.6903305
+
+# performance on test
+clMatTestGlm <- classMat(fit_glm, hrTest, thr)
+clMatTestGlm
+prfTestGlm <- perMat(clMatTestGlm)
+prfTestGlm
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.7342857 0.6954103 0.6710183   0.6585366 0.7342857
+
+```
+
+Regsubset(adjR2) regression model equation:
+log(p/(1-p)) = -0.08 - 0.42(MrgProf) -0.30(TotExp) + 0.21(SlsMarPep) + 0.12(HRProf) - 0.44(MrgStkOpt) - 0.25(LbTecGend)
+                + 0.35(RchScOvT) - 0.11(TrvlProf) - 0.13(SatHrRt)
+                
+Regsubset(bic) regression model equation:
+log(p/(1-p)) = -0.08 - 0.42(MrgProf) -0.30(TotExp) + 0.20(SlsMarPep) - 0.44(MrgStkOpt) - 0.25(LbTecGend)
+                + 0.34(RchScOvT)
+                
+```{r regsubset, message=FALSE}
+set.seed(3010)
+
+# regsubset process on the transformed data , nvmax to 13 to include all variables
+hrSubsets = regsubsets(Attr ~ ., data=hrTrain , nvmax = 13)
+# plot the result with adjr2
+plot(hrSubsets, scale="adjr2")
+
+
+# regsubset model
+# removing non significant variables
+bestR2Fit <- glm(Attr ~ MrgProf + TotExp + SlsMarPep + HRProf + MrgStkOpt + LbTecGend + RchScOvT + SatHrRt + TrvlProf,
+                 family = binomial(), data = hrTrain)
+
+# summary of the model
+summary(bestR2Fit) # AIC: 2102.6
+
+# performance matrix on train data
+clsMatTrainReg <- classMat(bestR2Fit, hrTrain, thr)
+clsMatTrainReg
+prfTrainReg <- perMat(clsMatTrainReg)
+prfTrainReg
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.6903305 0.6864961  0.673031   0.6828704 0.6903305
+
+# performance matrix on test data
+clsMatTestReg <- classMat(bestR2Fit, hrTest, thr)
+clsMatTestReg
+prfTestReg <- perMat(clsMatTestReg)
+prfTestReg
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.7342857 0.6954103 0.6710183   0.6585366 0.7342857
+
+
+# goodness of fit
+lrtest(bestR2Fit) # chiq sq 246.45 P < 2.2e-16
+
+
+# plot the result with bic
+plot(hrSubsets, scale="bic")
+
+# bic model
+# removing non significant variables
+bicFit <- glm(Attr ~ MrgProf + TotExp + SlsMarPep + MrgStkOpt + LbTecGend + RchScOvT,
+              family = binomial(), data = hrTrain)
+
+#summary of the model
+summary(bicFit)
+
+# goodness of fit
+lrtest(bicFit) # 241.98  p < 2.2e-16
+
+# performance matrix on train data
+clsMatTrainReg_bic <- classMat(bicFit, hrTrain, thr)
+clsMatTrainReg_bic
+prfTrainReg_bic <- perMat(clsMatTrainReg_bic)
+prfTrainReg_bic
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.6719706 0.6793575 0.6695122   0.6863426 0.6719706
+
+# performance matrix on test data
+clsMatTestReg_bic <- classMat(bicFit, hrTest, thr)
+clsMatTestReg_bic
+prfTestReg_bic <- perMat(clsMatTestReg_bic)
+prfTestReg_bic
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.7142857 0.6912378  0.672043   0.6693767 0.7142857
+
+```
+
+```{r function RL, message=FALSE}
+
+classMatRl <- function(model, dataX, dataY, thrs, lamb){
+  # get the predicted probabilities on the training data
+  pred <- predict(model, dataX, s=lamb, type = "response",family="binomial", 
+                  se.fit = FALSE)
+  # compute to probabilities
+  ypred <- ifelse(pred > thrs, 1, 0)
+
+  # compares predicted outcomes with actual values in test set
+  confMat=compare(ypred, dataY)
+  #classification matrix
+  return(confMat)
+}
+
+```
+
+Ridge Equation :
+log(p/(1-p)) = - 0.082 - 0.39(MrgProf) - 0.27(TotExp) + 0.20(SlsMarPep) + 0.12(HRProf) - 0.41(MrgStkOpt) - 0.05(Perf) + 0.03(ScEduFld) - 0.23(LbTecGend) + 0.32(RchScOvT) - 0.04(EduMgr) - 0.01(TecDesgFrmHm) - 0.11(SatHrRt) - 0.10(TrvlProf)
+
+
+```{r ridge, message=FALSE}
+set.seed(3010)
+
+# set the X and Y as matrices for train
+xTrain <- as.matrix(hrTrain[,-1])
+yTrain <- as.matrix((hrTrain[,1]))
+# set the X and Y as matrices for test
+xTest <- as.matrix(hrTest[,-1])
+yTest <- as.matrix((hrTest[,1]))
+
+#lRange = seq(0, 3, .01)
+
+# cross validation ridge
+fitRidge <- cv.glmnet(xTrain, yTrain, alpha = 0, family = "binomial")
+# lambda min
+fitRidge$lambda.min # 0.0137503
+# lambda 1se
+fitRidge$lambda.1se # 0.1407386
+# plot ridge
+plot(fitRidge)
+
+
+# fit ridge based on lambda 1se to get the R2
+fitRidge1 <- glmnet(xTrain, yTrain, alpha = 0, lambda = fitRidge$lambda.min, 
+                    standardize = TRUE, family = "binomial")
+# get the beta coefficients
+coefficients(fitRidge1)
+
+# performance matrix on train data
+clsMatTrainRidge <- classMatRl(fitRidge1, xTrain, yTrain, thr, fitRidge$lambda.min)
+clsMatTrainRidge
+prfTrainRidge <- perMat(clsMatTrainRidge)
+prfTrainRidge
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.6842105 0.6823319 0.6694611   0.6805556 0.6842105
+
+# performance matrix on test data
+clsMatTestRidge <- classMatRl(fitRidge1, xTest, yTest, thr, fitRidge$lambda.min)
+clsMatTestRidge
+prfTestRidge <- perMat(clsMatTestRidge)
+prfTestRidge
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.7285714 0.6884562 0.6640625   0.6504065 0.7285714
+
+# ridge test is not doing good look at sensitivity
+```
+
+Lasso Model Equation:
+
+log(p/(1-p)) = - 0.08 - 0.39(MrgProf) - 0.27(TotExp) + 0.18(SlsMarPep) + 0.10(HRProf) - 0.41(MrgStkOpt) - 0.03(Perf) - 0.008(ScEduFld) - 0.23(LbTecGend) + 0.32(RchScOvT) - 0.02(EduMgr) - 0.10(SatHrRt) + 0.09(TrvlProf)
+
+
+```{r Lasso , message=FALSE}
+set.seed(3010)
+# lasso regression
+# fold reduction is not needed as we have enough data
+fitLasso <- cv.glmnet(xTrain, yTrain, alpha = 1, family = "binomial")
+# lambda min
+fitLasso$lambda.min # 0.005298719 selecting 12 predictors
+# lambda 1se
+fitLasso$lambda.1se # 0.02139102 selecting 9 predictors
+
+# plot lasso
+plot(fitLasso)
+
+# lasso model at lambda min because we want to have more of deviance
+fitLasso1 <- glmnet(xTrain, yTrain, alpha=1, lambda = fitLasso$lambda.min, 
+                    family = "binomial")
+
+coefficients(fitLasso1)
+# performance matrix on train data
+clsMatTrainLas <- classMatRl(fitLasso1, xTrain, yTrain, thr, fitLasso$lambda.min)
+clsMatTrainLas
+prfTrainLas <- perMat(clsMatTrainLas)
+prfTrainLas
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.6878825 0.6859012 0.6730539   0.6840278 0.6878825
+
+# performance matrix on test data
+clsMatTestLas <- classMatRl(fitLasso1, xTest, yTest, thr,fitLasso$lambda.min)
+clsMatTestLas
+prfTestLas <- perMat(clsMatTestLas)
+prfTestLas
+
+#   sensitivity  accuracy precision specificity    recall
+# 1   0.7371429 0.6954103 0.6701299   0.6558266 0.7371429
+```
+
+```{r elasticnet , message=FALSE}
+
+set.seed(3010)
+
+alphaBest = 0
+bestSens = 0
+bestAcc = 0
+for(alph in seq(from = 0, to = 1, by = 0.01))
+{
+  fitElastic = cv.glmnet(xTrain, yTrain, alpha=alph, family = "binomial" )
+  
+  clsMateElas = classMatRl(fitElastic, xTest, yTest, thr,fitElastic$lambda.min)
+  elasticPrf = perMat(clsMateElas)
+  sens <- elasticPrf$sensitivity
+  #acc <- elasticPrf$accuracy
+  
+  if ( sens > bestSens){
+    print(alph)
+    alphaBest = alph
+    bestSens = sens
+    #bestAcc = acc
+    bestClasMat = clsMateElas
+    bestElasticPrf = elasticPrf
+  }
+  
+}
+  
+print("Best alpha is: ")
+print(alphaBest)
+print("Best Sensitivity is: ")
+print(bestSens)
+print("Best accuracy is: ")
+print(bestAcc)
+print("Best Classification Mat is: ")
+print(bestClasMat)
+print("Best Elastic performance is: ")
+print(bestElasticPrf)
+
+```
+
+# Relaxed Lasso
+
+log(p/(1-p)) = - 0.08 - 0.42(MrgProf) - 0.30(TotExp) + 0.21(SlsMarPep) + 0.12(HRProf) - 0.44(MrgStkOpt) - 0.25(LbTecGend) + 0.35(RchScOvT) - 0.13(SatHrRt) - 0.11(TrvlProf)
+
+
+```{r}
+set.seed(3010)
+
+# Relaxed Lasso 
+fit_rlasso = cv.glmnet(xTrain, yTrain, relax=T, family="binomial")  # the "min" will vary with runs.  Try several
+fit_rlasso # lambdamin 0.01949
+
+# plot the model
+plot(fit_rlasso)
+
+# get the coefficients
+coef(fit_rlasso, s="lambda.min", gamma=0) 
+
+# get the model 
+fit_rLasso1 <- glmnet(xTrain, yTrain, relax=T, lambda=fit_rlasso$lambda.min)
+
+
+# performance matrix on test data
+clsMatTrainrLas <- classMatRl(fit_rLasso1, xTrain, yTrain, thr,fit_rlasso$lambda.min)
+clsMatTrainrLas
+prfTrainrLas <- perMat(clsMatTrainrLas)
+prfTrainrLas
+
+# performance matrix on test data
+clsMatTestrLas <- classMatRl(fit_rLasso1, xTest, yTest, thr,fit_rlasso$lambda.min)
+clsMatTestrLas
+prfTestrLas <- perMat(clsMatTestrLas)
+prfTestrLas
+
+
+```
+
+```{r perfDataFrame, message=FALSE}
+
+train_mat <- matrix(c(prfTrainGlm, prfTrainReg,prfTrainReg_bic,prfTrainRidge,prfTrainLas,prfTrainrLas),
+                    ncol = 5, byrow = T)
+
+colnames(train_mat) = c("Sensitivity", "Accuracy", "Precision", "Specificity", "Recall")
+
+rownames(train_mat) = c("LogisticTrain","RegSubsetTrain_adjr2", "RegSubsetTrain_bic",
+                        "RidgeTrain","LassoTrain","RelaxLasso")
+
+train_mat
+
+test_mat <- matrix(c(prfTestGlm, prfTestReg,prfTestReg_bic,prfTestRidge, prfTestLas,
+                     bestElasticPrf,prfTestrLas), ncol = 5, byrow = T)
+colnames(test_mat) = c("Sensitivity", "Accuracy", "Precision", "Specificity", "Recall")
+rownames(test_mat) = c("LogisticTest","RegSubsetTest_adjr2", "RegSubsetTest_bic",
+                        "RidgeTest","LassoTest","ElasticNetTest","RelaxLasso")
+
+
+test_mat
+```
+Lasso Equation:
+log(p/(1-p)) = - 0.08 - 0.39(MrgProf) - 0.27(TotExp) + 0.18(SlsMarPep) + 0.10(HRProf) - 0.41(MrgStkOpt) - 0.03(Perf) - 0.008(ScEduFld) - 0.23(LbTecGend) + 0.32(RchScOvT) - 0.02(EduMgr) - 0.10(SatHrRt) + 0.09(TrvlProf)
+
+
+Coefficients of Lasso.
+
+```{r coefficients, message=FALSE}
+
+coef(fitLasso1, s="lambda.min")
+ 
+```
+
+
+```{r}
+library(data.table)
+library(dplyr)
+library(VIM)
+library(DT)
+library(gridExtra)
+library(ggplot2)
+library(caret)
+library(Metrics)
+library(randomForest)
+library(pROC)
+library(e1071)
+library(corrplot)
+```
+
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+myData <-read.csv("HREmployee.csv")
+ogData<-myData
+```
+
+```{r}
+myData$EmployeeNumber<- NULL
+myData$StandardHours <- NULL
+myData$Over18 <- NULL
+myData$EmployeeCount <- NULL
+cat("Data Set has ",dim(myData)[1], " Rows and ", dim(myData)[2], " Columns" )
+```
+
+
+```{r}
+myData %>%
+        group_by(Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = Attrition, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        labs(x="Attrition", y="Count of Attriation")+
+        ggtitle("Attrition")+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))
+
+```
+
+
+```{r}
+ggplot(data=myData, aes(myData$Age)) + 
+        geom_histogram(breaks=seq(20, 50, by=2), 
+                       col="red", 
+                       aes(fill=..count..))+
+        labs(x="Age", y="Count")+
+        scale_fill_gradient("Count", low="blue", high="red")
+```
+
+```{r}
+a1 <- myData %>%
+        group_by(BusinessTravel) %>%
+        tally() %>%
+        ggplot(aes(x = BusinessTravel, y = n,fill=BusinessTravel)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        labs(x="Business Travel", y="Number Attriation")+
+        ggtitle("Attrition according to the Business Travel")+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))
+
+a2<- myData %>%
+        group_by(BusinessTravel, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = BusinessTravel, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        labs(x="Business Travel", y="Number Attriation")+
+        ggtitle("Attrition according to the Business Travel")+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))
+
+
+grid.arrange(a1,a2)
+```
+
+
+```{r}
+myData %>%
+        ggplot(aes(x = BusinessTravel, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = 2) +
+        labs(y = "Percentage", fill= "business Travel") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) + 
+        ggtitle("Attrition")
+```
+
+
+```{r}
+g1 <- myData %>%
+        group_by(Department) %>%
+        tally() %>%
+        ggplot(aes(x = Department, y = n,fill=Department)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        geom_text(aes(label = n), vjust = -0.1, position = position_dodge(0.9))
+
+g2 <- myData %>%
+        group_by(Department, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = Department, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        geom_text(aes(label = n), vjust = -0.1, position = position_dodge(0.9))
+
+grid.arrange(g1,g2)
+```
+
+
+```{r}
+g1<- myData %>%
+        ggplot(aes(x = Education, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = 2) +
+        labs(y = "Percentage", fill= "Education") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) + 
+        ggtitle("Attrition")
+
+g2<- myData %>%
+        group_by(Education, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = Education, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))+
+        labs(x="Education", y="Number Attriation")+
+        ggtitle("Attrition in regards to Education Level")
+
+grid.arrange(g1,g2)
+```
+
+
+```{r}
+myData %>%
+        ggplot(aes(x = Gender, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = -.5) +
+        labs(y = "Percentage", fill= "Gender") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) + 
+        ggtitle("Attrition")
+
+```
+
+
+```{r}
+myData %>%
+        ggplot(aes(x = MaritalStatus, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = -.5) +
+        labs(y = "Percentage", fill= "MaritalStatus") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) + 
+        ggtitle("Attrition")
+```
+
+
+```{r}
+myData %>%
+        ggplot(mapping = aes(x = MonthlyIncome)) + 
+        geom_histogram(aes(fill = Attrition), bins=20)+
+        labs(x="Monthly Income", y="Number Attriation")+
+        ggtitle("Attrition in regards to Monthly Income")
+```
+
+
+
+```{r}
+g1 <-myData %>%
+        ggplot(aes(x = OverTime, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = 0.3) +
+        labs(y = "Percentage", fill= "OverTime") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.3)) + 
+        ggtitle("Attrition")
+
+
+g2 <-myData %>%
+        group_by(OverTime, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = OverTime, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        geom_text(aes(label = n), vjust = -0.3, position = position_dodge(0.9))+
+        labs(x="Over time", y="Number Attriation")+
+        ggtitle("Attrition in regards to Over time")
+
+grid.arrange(g1,g2)
+
+```
+
+
+```{r}
+g1<-myData %>%
+        ggplot(aes(x = WorkLifeBalance, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = -.5) +
+        labs(y = "Percentage", fill= "WorkLifeBalance") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) + 
+        ggtitle("Attrition")
+
+g2<- myData %>%
+        group_by(WorkLifeBalance, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = WorkLifeBalance, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))+
+        labs(x="  Work Life Balance", y="Number Attriation")+
+        ggtitle("Attrition in regards to  Work Life Balance")
+grid.arrange(g1,g2)
+```
+
+```{r}
+myData$AgeGroup <- as.factor(
+        ifelse(myData$Age<=24,"Young", ifelse(
+        myData$Age<=54,"Middle-Age","Adult"
+        ))
+)
+table(myData$AgeGroup)
+```
+
+
+
+```{r}
+myData$TotlaSatisfaction <- 
+        as.numeric(myData$EnvironmentSatisfaction)+
+        as.numeric(myData$JobInvolvement)+
+        as.numeric(myData$JobSatisfaction)+
+        as.numeric(myData$RelationshipSatisfaction)+
+        as.numeric(myData$WorkLifeBalance)
+
+summary(myData$TotlaSatisfaction)
+```
+
+
+```{r}
+myData$YearsEducation <-  ifelse(myData$Education==1,10,ifelse(myData$Education==2,12,
+        ifelse(myData$Education==3,16,ifelse(myData$Education==4,18,22))))  
+
+table(myData$YearsEducation)
+# the majority of employee are 16 years education (Bachelor)
+```
+
+```{r}
+myData$IncomeLevel <- as.factor(
+        ifelse(myData$MonthlyIncome<ave(myData$MonthlyIncome),"Low","High")
+)
+table(myData$IncomeLevel)
+```
+
+
+#LDA
+```{r}
+library(tidyverse)
+# import data
+hr <- ogData
+
+# display
+head(hr)
+
+# more descritive
+hr$Attrition <- ifelse(hr$Attrition == "Yes",1,0)
+hr$OverTime <- ifelse(hr$OverTime == "Yes","OT.Yes","OT.No")
+
+# summary
+summary(hr)
+
+# remove EmployeeCount & EmployeeNumber & Over18 & StandardHours
+hr <- dplyr::select(hr, -c(EmployeeCount, EmployeeNumber, Over18, StandardHours))
+
+# convert multiple fields into a factor
+catCols <- c('Attrition', 'BusinessTravel', 'Department', 'Education', 'EducationField',
+          'EnvironmentSatisfaction', 'Gender', 'JobInvolvement', 'JobLevel', 'JobRole',
+          'JobSatisfaction', 'MaritalStatus', 'OverTime', 'PerformanceRating', 
+          'RelationshipSatisfaction', 'StockOptionLevel', 'WorkLifeBalance')
+# convert to factors
+hr[catCols] <- lapply(hr[catCols], factor)
+
+# summary
+summary(hr)
+
+# select subset of HR data
+hrCat <- hr %>% dplyr::select(c(Attrition, BusinessTravel, Department, Education,
+                                EducationField, EnvironmentSatisfaction, Gender,
+                                JobInvolvement, JobLevel, JobRole,JobSatisfaction,
+                                MaritalStatus, OverTime, PerformanceRating, 
+                                RelationshipSatisfaction, StockOptionLevel, 
+                                WorkLifeBalance))
+
+# summary
+summary(hrCat)
+```
+
+
+```{r}
+library(rfUtilities)
+library('MASS')
+set.seed(123)
+train_index <- sample(nrow(hrCat), 0.75 * nrow(hrCat))
+train <- hrCat[train_index, ]
+test <- hrCat[-train_index, ]
+
+# Perform linear discriminant analysis
+model <- lda(Attrition ~ ., data = train)
+plot(model)
+# on train data
+predictions <- predict(model, train[-1], type = "response")
+
+# confusion matrix
+
+pred_train<-compare(predictions$class,train$Attrition)
+print(pred_train)
+cat("Sensitivity is ",sensitivity(pred_train))
+cat("Accuracy is ",accuracy(pred_train))
+cat("precision is ",precision(pred_train))
+cat("specificity is ",specificity(pred_train))
+
+
+# Make predictions on the test set
+predictions <- predict(model, test[-1])
+pred_test<-compare(predictions$class,test$Attrition)
+print(pred_test)
+cat("Sensitivity is ",sensitivity(pred_test))
+cat("Accuracy is ",accuracy(pred_test))
+cat("precision is ",precision(pred_test))
+cat("specificity is ",specificity(pred_test))
+```
+
+#Oversampled data
+
+```{r}
+library(ROSE)
+
+# Oversample the training data using ROSE
+oversampled <- ovun.sample(Attrition ~ ., data = hrCat, method ="over", N = nrow=2400, seed = 123)
+```
+
+
+```{r}
+oversampled$data %>%
+        group_by(Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = Attrition, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        labs(x="Attrition", y="Count of Attriation")+
+        ggtitle("Attrition")+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))
+
+```
+```{r}
+oversampled$data %>%
+        group_by(BusinessTravel, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = BusinessTravel, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        labs(x="Business Travel", y="Number Attriation")+
+        ggtitle("Attrition according to the Business Travel")+
+        geom_text(aes(label = n), vjust = -0.5, position = position_dodge(0.9))
+
+
+```
+```{r}
+oversampled$data %>%
+        ggplot(aes(x = MaritalStatus, group = Attrition)) + 
+        geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                 stat="count", 
+                 alpha = 0.7) +
+        geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), 
+                  stat= "count", 
+                  vjust = -.5) +
+        labs(y = "Percentage", fill= "MaritalStatus") +
+        facet_grid(~Attrition) +
+        theme_minimal()+
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) + 
+        ggtitle("Attrition")
+```
+
+
+
+
+```{r}
+ggplot(data=myData, aes(myData$Age)) + 
+        geom_histogram(breaks=seq(20, 50, by=2), 
+                       col="red", 
+                       aes(fill=..count..))+
+        labs(x="Age", y="Count")+
+        scale_fill_gradient("Count", low="blue", high="red")
+```
+
+
+
+
+```{r}
+oversampled$data %>%
+        group_by(OverTime, Attrition) %>%
+        tally() %>%
+        ggplot(aes(x = OverTime, y = n,fill=Attrition)) +
+        geom_bar(stat = "identity") +
+        theme_minimal()+
+        geom_text(aes(label = n), vjust = -0.3, position = position_dodge(0.9))+
+        labs(x="Over time", y="Number Attriation")+
+        ggtitle("Attrition in regards to Over time")
+```
+
+```{r}
+VIM::aggr(hrCat)
+library('Amelia')
+missmap(hrCat)
+```
+
+
+# LDA
+
+```{r}
+# Read the HR dataset
+hr_data <- ogData
+# Load the required package
+library(MASS)
+
+# Identify variables with only one level
+variables_with_single_level <- sapply(hr_data, function(x) length(unique(x)) == 1)
+variables_to_exclude <- names(variables_with_single_level)[variables_with_single_level]
+
+# Remove variables with only one level
+hr_data <- hr_data[, !names(hr_data) %in% variables_to_exclude]
+
+# Convert the outcome variable to a factor if it is not already
+hr_data$Attrition <- as.factor(hr_data$Attrition)
+
+# Extract the predictor variables
+predictors <- names(hr_data)[-which(names(hr_data) == "Attrition")]
+
+# Run LDA with all variables
+lda_model <- lda(Attrition ~ ., data = hr_data[, c("Attrition", predictors)])
+plot(lda_model)
+```
+
+
+# new LDA with all variables
+
+```{r}
+library(tidyverse)
+# import data
+hr <- ogData
+
+# display
+head(hr)
+
+# more descritive
+hr$Attrition <- ifelse(hr$Attrition == "Yes",1,0)
+hr$OverTime <- ifelse(hr$OverTime == "Yes","OT.Yes","OT.No")
+
+# remove EmployeeCount & EmployeeNumber & Over18 & StandardHours
+hr <- dplyr::select(hr, -c(EmployeeCount, EmployeeNumber, Over18, StandardHours))
+
+# convert multiple fields into a factor
+catCols <- c('Attrition', 'BusinessTravel', 'Department', 'Education', 'EducationField',
+          'EnvironmentSatisfaction', 'Gender', 'JobInvolvement', 'JobLevel', 'JobRole',
+          'JobSatisfaction', 'MaritalStatus', 'OverTime', 'PerformanceRating', 
+          'RelationshipSatisfaction', 'StockOptionLevel', 'WorkLifeBalance')
+# convert to factors
+hr[catCols] <- lapply(hr[catCols], factor)
+# hr$MonthlyIncome <- log(hr$MonthlyIncome)
+
+# select subset of HR data
+hrCat <- hr %>% dplyr::select(c(Attrition, Age, BusinessTravel, Department, Education,
+                                EducationField, EnvironmentSatisfaction, Gender,
+                                JobInvolvement, JobLevel, JobRole,JobSatisfaction,
+                                MaritalStatus, OverTime, PerformanceRating, 
+                                RelationshipSatisfaction, StockOptionLevel, 
+                                WorkLifeBalance, Education,DistanceFromHome,MonthlyIncome,
+                                YearsAtCompany,TotalWorkingYears,YearsInCurrentRole,
+                                HourlyRate,MonthlyRate,NumCompaniesWorked,PercentSalaryHike,
+                                TrainingTimesLastYear))
+
+```
+
+
+```{r}
+library(rfUtilities)
+library('MASS')
+set.seed(123)
+train_index <- sample(nrow(hrCat), 0.8 * nrow(hrCat))
+train <- hrCat[train_index, ]
+test <- hrCat[-train_index, ]
+
+train<- data.frame(train)
+train<- data.frame(test)
+
+# Perform linear discriminant analysis
+model <- lda(Attrition ~ ., data = train)
+plot(model)
+# on train data
+predictions <- predict(model, train[-1], type = "response")
+
+# confusion matrix
+
+pred_train<-compare(predictions$class,train$Attrition)
+print(pred_train)
+cat("Sensitivity is ",sensitivity(pred_train))
+cat("Accuracy is ",accuracy(pred_train))
+cat("precision is ",precision(pred_train))
+cat("specificity is ",specificity(pred_train))
+
+
+# Make predictions on the test set
+predictions <- predict(model, test[-1])
+pred_test<-compare(predictions$class,test$Attrition)
+print(pred_test)
+cat("Sensitivity is ",sensitivity(pred_test))
+cat("Accuracy is ",accuracy(pred_test))
+cat("precision is ",precision(pred_test))
+cat("specificity is ",specificity(pred_test))
+
+
+F1= 2*(precision(pred_test)*sensitivity(pred_test))/(precision(pred_test)+sensitivity(pred_test))
+F1
+
+```
+
+#oversamle
+
+```{r}
+library(ROSE)
+library(caret)
+
+# Oversample the training data using ROSE
+oversampled <- ovun.sample(Attrition ~ ., data = hrCat, method = "over", N = 2400, seed = 12345)
+
+index <- createDataPartition(y = oversampled$data$Attrition, p = 0.8, list = FALSE)
+oversampled_train <- oversampled$data[index, ]
+oversampled_test <- oversampled$data[-index, ]
+
+# Perform linear discriminant analysis on the oversampled data
+model <- lda(Attrition ~ ., data = oversampled_train)
+plot(model)
+
+predictions <- predict(model, oversampled_train[-1], type = "response")
+
+# confusion matrix
+
+pred_train<-compare(predictions$class,oversampled_train$Attrition)
+print(pred_train)
+cat("Sensitivity is ",sensitivity(pred_train))
+cat("Accuracy is ",accuracy(pred_train))
+cat("precision is ",precision(pred_train))
+cat("specificity is ",specificity(pred_train))
+F1= 2*(precision(pred_train)*sensitivity(pred_train))/(precision(pred_train)+sensitivity(pred_train))
+F1
+
+
+# Make predictions on the test set
+predictions <- predict(model, oversampled_test[-1])
+pred_test<-compare(predictions$class,oversampled_test$Attrition)
+print(pred_test)
+cat("Sensitivity is ",sensitivity(pred_test))
+cat("Accuracy is ",accuracy(pred_test))
+cat("precision is ",precision(pred_test))
+cat("specificity is ",specificity(pred_test))
+
+
+F1= 2*(precision(pred_test)*sensitivity(pred_test))/(precision(pred_test)+sensitivity(pred_test))
+F1
+
+
+
+```
+
+```{r}
+coefficients<- model$scaling
+coefficients
+
+class_labels <- levels(oversampled$data$Attrition)
+
+# Plot the LDA coefficients
+barplot(coefficients, beside = TRUE, col = c("blue", "red"),
+        main = "LDA Coefficients", xlab = "Variables", ylab = "Coefficient")
+
+# Add the legend
+legend("topright", legend = class_labels, fill = c("blue", "red"), title = "Class")
+
+```
+
+# Ordinal Logistic Regression
+
+```{r}
+
+# Load required libraries
+library(MASS)
+library(nnet)
+
+# Read the dataset (assuming it's saved as a CSV file in your working directory)
+hr_data <- ogData
+
+# Define the income categories and corresponding labels
+income_categories <- c("Low", "Medium", "High")
+
+# Define the income ranges (you can adjust these according to your needs)
+income_ranges <- c(0, 5000, 10000, max(hr_data$MonthlyIncome))
+
+# Cut the MonthlyIncome variable into income categories
+hr_data$IncomeCategory <- cut(hr_data$MonthlyIncome, breaks = income_ranges,
+                              labels = income_categories, include.lowest = TRUE)
+
+# Convert the IncomeCategory variable to an ordered factor
+hr_data$IncomeCategory <- factor(hr_data$IncomeCategory, ordered = TRUE,
+                                 levels = income_categories)
+
+# Specify the formula for the ordinal logistic regression
+formula <- IncomeCategory ~ Age + BusinessTravel + Department + Education + 
+            EnvironmentSatisfaction + JobInvolvement + JobLevel + 
+            JobSatisfaction + MaritalStatus + NumCompaniesWorked + 
+            WorkLifeBalance
+
+# Fit the ordinal logistic regression model
+ordinal_model <- polr(formula, data = hr_data, Hess = TRUE)
+# Print the model summary
+summary(ordinal_model)
+
+coeffs <- coef(summary(ordinal_model))
+coeffs
+p <- pnorm(abs(coeffs[,"t value"]), lower.tail = FALSE) * 2
+
+coeffs <- cbind(coeffs, "p values" = p)
+coeffs
+```
+
+```{r}
+formula <- IncomeCategory ~ Age + JobInvolvement + JobLevel + 
+             + MaritalStatus + NumCompaniesWorked 
+
+# Fit the ordinal logistic regression model
+ordinal_model <- polr(formula, data = hr_data, Hess = TRUE)
+
+# Print the model summary
+summary(ordinal_model)
+
+(ctable <- coef(summary(ordinal_model)))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+(ctable <- cbind(ctable, "p value" = p))
+
+
+```
+
+## MCA
+
+```{r message = FALSE}
+
+library(tidyverse)     # data wrangling
+library(corrplot)      # correlation plot
+library(psych)         # used for describe
+library(ggpubr)        # combine plots
+
+
+######################################
+# Categorical variables mapping.     #
+######################################
+
+# Education:
+# 1 'Below College'
+# 2 'College'
+# 3 'Bachelor'
+# 4 'Master'
+# 5 'Doctor'
+# 
+# Environment Satisfaction:
+# 1 'Low'
+# 2 'Medium'
+# 3 'High'
+# 4 'Very High'
+# 
+# Job Involvement:
+# 1 'Low'
+# 2 'Medium'
+# 3 'High'
+# 4 'Very High'
+# 
+# Job Satisfaction:
+# 1 'Low'
+# 2 'Medium'
+# 3 'High'
+# 4 'Very High'
+# 
+# Relationship Satisfaction:
+# 1 'Low'
+# 2 'Medium'
+# 3 'High'
+# 4 'Very High'
+# 
+# WorkLife Balance:
+# 1 'Bad'
+# 2 'Good'
+# 3 'Better'
+# 4 'Best'
+# 
+# Performance Rating
+# 1 'Low'
+# 2 'Good'
+# 3 'Excellent'
+# 4 'Outstanding'
+
+```
+
+**Import Data**
+
+```{r}
+
+# import data
+hr <- read.csv('/Users/sir/Desktop/DePaul/Spring2023/DSC424/TeamProject/HREmployeeAttrition.csv')
+
+# copy data frame
+hrCopy <- hr
+
+# no NAs
+sum(is.na(hr))
+
+# remove EmployeeCount & EmployeeNumber & Over18 & StandardHours
+hr <- dplyr::select(hr, -c(EmployeeCount, EmployeeNumber, Over18, StandardHours))
+
+# over sample the data for class imbalance
+oversampled <- ROSE::ovun.sample(Attrition ~ ., data = hr, method = "over", N = 2400)
+
+# copy
+hr <- oversampled$data
+
+
+```
+
+**Data Wrangling**
+
+```{r}
+
+# categorical variables
+catCols <- c('Attrition', 'BusinessTravel', 'Department', 'Education',
+             'EducationField', 'EnvironmentSatisfaction', 'Gender',
+             'JobInvolvement', 'JobLevel', 'JobRole', 'JobSatisfaction',
+             'MaritalStatus', 'OverTime', 'PerformanceRating',
+             'RelationshipSatisfaction', 'StockOptionLevel', 'WorkLifeBalance')
+
+
+# correlation plot
+corrplot(cor(hr[ , ! names(hr) %in% c(catCols)]), method = "ellipse", order = "AOE")
+
+# pairs plot
+pairs.panels((hr[ , ! names(hr) %in% c(catCols)]))
+
+# select subset of HR data ( categorical variables ONLY)
+hrCat <- hr %>% dplyr::select(all_of(catCols))
+
+# more deccriptive for the plots
+hrCat$Attrition <- ifelse(hrCat$Attrition == "Yes","Att.Yes","Att.No")
+hrCat$OverTime <- ifelse(hrCat$OverTime == "Yes","OT.Yes","OT.No")
+
+# convert to factors
+hrCat[catCols] <- lapply(hrCat[catCols], factor)
+
+# change factor level
+levels(hrCat$Education) <- as.factor(c('Below College','College',
+                                       'Bachelor','Master','Doctor')) 
+
+levels(hrCat$WorkLifeBalance) <- as.factor(c('WLB.Bad', 'WLB.Good',
+                                             'WLB.Better','WLB.Best'))
+
+levels(hrCat$RelationshipSatisfaction) <- as.factor(c('RS.Low', 'RS.Medium', 
+                                                      'RS.High', 'RS.Very High'))
+
+levels(hrCat$EnvironmentSatisfaction) <- as.factor(c('ES.Low', 'ES.Medium', 
+                                                     'ES.High', 'ES.Very High'))
+
+levels(hrCat$JobInvolvement) <- as.factor(c('JI.Low', 'JI.Medium', 
+                                            'JI.High', 'JI.Very High'))
+
+levels(hrCat$JobSatisfaction) <- as.factor(c('JS.Low', 'JS.Medium', 
+                                             'JS.High', 'JS.Very High'))
+
+levels(hrCat$JobSatisfaction) <- as.factor(c('JS.Low', 'JS.Medium', 
+                                             'JS.High', 'JS.Very High'))
+
+levels(hrCat$JobLevel) <- as.factor((c('JL.1',"JL.2", "JL.3", "JL.4", "JL.5")))
+
+levels(hrCat$StockOptionLevel) <- as.factor((c('SOL.0',"SOL.1", "SOL.2",
+                                               "SOL.3")))
+
+# only 3s & 4s
+levels(hrCat$PerformanceRating) <- as.factor((c('PR.Excellent',
+                                                'PR.Outstanding')))
+
+# summary
+summary(hrCat)
+
+
+```
+
+**Mosaic Plots**
+
+```{r}
+
+################
+# Mosaic plots #
+################
+# mosaic plots *
+mosaicplot(table(hrCat$MaritalStatus, hrCat$Department), 
+           las = 2, cex.axis = 0.7,
+           main = "",
+           xlab = "MaritalStatus",
+           ylab = "Department",
+           border = "chocolate",
+           shade = TRUE)
+
+
+mosaicplot(table(hrCat$Attrition, hrCat$JobRole), 
+           las = 2, cex.axis = 0.7,
+           main = "",
+           xlab = "Attrition",
+           ylab = "Job Role",
+           border = "chocolate",
+           shade = TRUE)
+
+
+mosaicplot(table(hrCat$Gender, hrCat$Department), 
+           las = 2, cex.axis = 0.7,
+           main = "",
+           xlab = "Gender",
+           ylab = "Department",
+           border = "chocolate",
+           shade = TRUE)
+
+
+mosaicplot(table(hrCat$Attrition, hrCat$JobLevel), 
+           las = 2, cex.axis = 0.7,
+           main = "",
+           xlab = "Attrition",
+           ylab = "Job Level",
+           border = "chocolate",
+           shade = TRUE)
+
+
+mosaicplot(table(hrCat$Attrition, hrCat$BusinessTravel), 
+           las = 2, cex.axis = 0.7,
+           main = "",
+           xlab = "Attrition",
+           ylab = "Business Travel",
+           border = "chocolate",
+           shade = TRUE)
+
+
+```
+
+**CA Plots**
+
+```{r}
+
+# correspondence analysis
+fitca <-  ca::ca(table(hrCat$MaritalStatus, hrCat$Department))
+# plot
+plot(fitca, main = "Marital Status & Department", arrows = c(T,T))
+
+# correspondence analysis
+fitca <-  ca::ca(table(hrCat$MaritalStatus, hrCat$RelationshipSatisfaction))
+# plot
+plot(fitca, main = "Marital Status & Work Relationship Satisfaction", arrows = c(T,T))
+
+# correspondence analysis
+fitca <-  ca::ca(table(hrCat$MaritalStatus, hrCat$BusinessTravel))
+# plot
+plot(fitca, main = "Marital Status & Business Travel", arrows = c(T,T))
+
+# correspondence analysis
+fitca <-  ca::ca(table(hrCat$Education, hrCat$MaritalStatus))
+# plot
+plot(fitca, main = "Marital Status & Education", arrows = c(T,T))
+
+# correspondence analysis
+fitca <-  ca::ca(table(hrCat$RelationshipSatisfaction, hrCat$JobRole))
+# plot
+plot(fitca, main = "Work Relationship Satisfaction & Job Role", arrows = c(T,T))
+
+# correspondence analysis
+fitca <-  ca::ca(table(hrCat$JobRole, hrCat$Education))
+# plot
+plot(fitca, main = "Job Role & Education", arrows = c(T,T))
+
+
+```
+
+**MCA Plots**
+
+```{r}
+
+# additional categorical values
+newHR <- hrCat[, c("JobRole", "Attrition")]
+
+# additional categorical values
+newHR <- hrCat[, c("RelationshipSatisfaction", "BusinessTravel",
+                   "MaritalStatus", "JobRole", "Attrition", "WorkLifeBalance")]
+
+# additional categorical values
+newHR <- hrCat[, c("Gender", "RelationshipSatisfaction","EnvironmentSatisfaction",
+                   "MaritalStatus", "WorkLifeBalance","JobSatisfaction",
+                   "PerformanceRating")]
+
+# additional categorical values
+newHR <- hrCat[, c("Attrition", "Gender", "RelationshipSatisfaction", "OverTime",
+                   "MaritalStatus","EnvironmentSatisfaction", "JobLevel",
+                   "JobSatisfaction","WorkLifeBalance", "Education")]
+
+
+
+# make sure include 
+newHR <- hrCat[, c("Attrition", "OverTime", "Gender", "MaritalStatus",
+                   "Department", "Education","BusinessTravel")]
+
+# number of categories per variable
+cats <- apply(newHR, 2, function(x) nlevels(as.factor(x)))
+
+# apply MCA using FactoMineR Library
+mcaHR.Burt <- FactoMineR::MCA(newHR, method = "Burt", graph = FALSE)
+
+# data frame with variable coordinates
+mHRB_vars_df = data.frame(mcaHR.Burt$var$coord, Variable = rep(names(cats), cats))
+
+# plot of variable categories
+ggplot(data=mHRB_vars_df, 
+       aes(x = Dim.1, y = Dim.2,label = rownames(mHRB_vars_df))) +
+  geom_point(alpha = 0.2) +
+  geom_hline(yintercept = 0, colour = "gray70") +
+  geom_vline(xintercept = 0, colour = "gray70") +
+  geom_text(aes(colour=Variable), angle = 0) +
+  ggtitle("Initial Exploratory Analysis MCA Plot")
+
+
+# make sure include 
+newHR <- hrCat[, c("Attrition", "MaritalStatus", "Education", "Department",
+                   "JobInvolvement", "JobSatisfaction","RelationshipSatisfaction")]
+
+# number of categories per variable
+cats <- apply(newHR, 2, function(x) nlevels(as.factor(x)))
+
+# apply MCA using FactoMineR Library
+mcaHR.Burt <- FactoMineR::MCA(newHR, method = "Burt", graph = FALSE)
+
+# data frame with variable coordinates
+mHRB_vars_df = data.frame(mcaHR.Burt$var$coord, Variable = rep(names(cats), cats))
+
+# plot of variable categories
+ggplot(data=mHRB_vars_df, 
+       aes(x = Dim.1, y = Dim.2,label = rownames(mHRB_vars_df))) +
+  geom_point(alpha = 0.2) +
+  geom_hline(yintercept = 0, colour = "gray70") +
+  geom_vline(xintercept = 0, colour = "gray70") +
+  geom_text(aes(colour=Variable), angle = 0) +
+  ggtitle("Personality Aspect MCA Plot")
+
+# make sure include 
+newHR <- hrCat[, c("Attrition", "OverTime", "JobRole",
+                   "Gender")]
+
+# number of categories per variable
+cats <- apply(newHR, 2, function(x) nlevels(as.factor(x)))
+
+# apply MCA using FactoMineR Library
+mcaHR.Burt <- FactoMineR::MCA(newHR, method = "Burt", graph = FALSE)
+
+# data frame with variable coordinates
+mHRB_vars_df = data.frame(mcaHR.Burt$var$coord, Variable = rep(names(cats), cats))
+
+# plot of variable categories
+ggplot(data=mHRB_vars_df, 
+       aes(x = Dim.1, y = Dim.2,label = rownames(mHRB_vars_df))) +
+  geom_point(alpha = 0.2) +
+  geom_hline(yintercept = 0, colour = "gray70") +
+  geom_vline(xintercept = 0, colour = "gray70") +
+  geom_text(aes(colour=Variable), angle = 0) +
+  ggtitle("MCA Plot - Burt")
+
+
+# make sure include 
+newHR <- hrCat[, c("Attrition", "OverTime", "JobRole",
+                   "Gender")]
+
+# number of categories per variable
+cats <- apply(newHR, 2, function(x) nlevels(as.factor(x)))
+
+# apply MCA using FactoMineR Library
+mcaHR.Burt <- FactoMineR::MCA(newHR, method = "Burt", graph = FALSE)
+
+# data frame with variable coordinates
+mHRB_vars_df = data.frame(mcaHR.Burt$var$coord, Variable = rep(names(cats), cats))
+
+# plot of variable categories
+ggplot(data=mHRB_vars_df, 
+       aes(x = Dim.1, y = Dim.2,label = rownames(mHRB_vars_df))) +
+  geom_point(alpha = 0.2) +
+  geom_hline(yintercept = 0, colour = "gray70") +
+  geom_vline(xintercept = 0, colour = "gray70") +
+  geom_text(aes(colour=Variable), angle = 0) +
+  ggtitle("MCA Plot - Burt")
+
+
+```
+
+**Polychoric Correlation**
+
+```{r}
+
+##########################
+# Polychoric Correlation #
+##########################
+# ordinal variables
+ordCol <- c("OverTime","BusinessTravel","Education", "EnvironmentSatisfaction",
+            "JobInvolvement","JobLevel", "JobSatisfaction","PerformanceRating",
+            "RelationshipSatisfaction","StockOptionLevel", "WorkLifeBalance")
+
+# copy all the category variables
+hrAllCat <- hr %>% dplyr::select(all_of(catCols))
+
+# Replace Values Based on Condition
+hrAllCat$OverTime <-  ifelse(hrAllCat$OverTime == "Yes", 1,2)
+hrAllCat$BusinessTravel[hrAllCat$BusinessTravel == "Non-Travel"] <- 1
+hrAllCat$BusinessTravel[hrAllCat$BusinessTravel == "Travel_Rarely"] <- 2
+hrAllCat$BusinessTravel[hrAllCat$BusinessTravel == "Travel_Frequently"] <- 3
+
+# data frame for ordinal 
+hrOrdinal <- hrAllCat %>% dplyr::select(all_of(ordCol))
+hrOrdinal$BusinessTravel <- as.numeric(hrOrdinal$BusinessTravel)
+
+# create ordered factors
+hrOrdinal$OverTime <- factor(hrOrdinal$OverTime, 
+                             levels = c(1,2), ordered = T)
+
+#
+hrOrdinal$BusinessTravel <- factor(hrOrdinal$BusinessTravel, 
+                                   levels = c(1,2,3), ordered = T)
+
+# 
+hrOrdinal$Education <- factor(hrOrdinal$Education, 
+                              levels = c(1, 2, 3, 4, 5), ordered = T)
+#
+hrOrdinal$EnvironmentSatisfaction <- factor(hrOrdinal$EnvironmentSatisfaction, 
+                                            levels = c(1, 2, 3, 4), ordered = T)
+
+#
+hrOrdinal$JobInvolvement <- factor(hrOrdinal$JobInvolvement, 
+                                   levels = c(1, 2, 3, 4), ordered = T)
+
+#
+hrOrdinal$JobLevel <- factor(hrOrdinal$JobLevel, 
+                             levels = c(1, 2, 3, 4, 5), ordered = T)
+
+#
+hrOrdinal$JobSatisfaction <- factor(hrOrdinal$JobSatisfaction, 
+                                    levels = c(1, 2, 3, 4), ordered = T)
+
+#
+hrOrdinal$PerformanceRating <- factor(hrOrdinal$PerformanceRating, 
+                                      levels = c(3, 4), ordered = T)
+
+#
+hrOrdinal$RelationshipSatisfaction <- factor(hrOrdinal$RelationshipSatisfaction, 
+                                             levels = c(1, 2, 3, 4), ordered = T)
+
+#
+hrOrdinal$StockOptionLevel <- factor(hrOrdinal$StockOptionLevel, 
+                                     levels = c(0, 1, 2, 3), ordered = T)
+
+#
+hrOrdinal$WorkLifeBalance <- factor(hrOrdinal$WorkLifeBalance, 
+                                    levels = c(1, 2, 3, 4), ordered = T)
+
+# ordinal categorical variables
+str(hrOrdinal) 
+
+```
+
+**Ordinal Factor Analysis**
+
+
+```{r}
+
+# hetcor
+ho <- polycor::hetcor(hrOrdinal) %>% suppressWarnings()
+
+# PCA all ordinal variables
+po <- prcomp(ho$correlations, scale = TRUE)
+# bar scree plot
+screeplot(po, type = 'barplot', main = "PCA Scaled") + title(xlab = "PCs")
+abline(1, 0, col = "red")
+
+#
+corrplot(ho$correlations, method = "ellipse", order = "AOE")
+
+# Correlation test for all the categorical variables
+# probability correlation on sample size
+PCorrTestC <- corr.test(ho$correlations, adjust="none")
+
+# vectorized probability
+P <- PCorrTestC$p
+
+# if True probability at a 95% confidence level
+PTestC <- ifelse(P < 0.05, T, F)
+
+# how many significant correlations there are for each variable.  
+colSums(PTestC) - 1  
+# We have to subtract 1 for the diagonal elements (self-correlation)
+
+
+```
+
+**Linear Discriminant Analysis**
+
+```{r}
+
+##########################################################################
+# Linear Discriminant Analysis Orginal DataFrame ONLY ordinal variables  #
+##########################################################################
+# copy all the category variables
+hrOrdCat <- hrCopy %>% dplyr::select(all_of(catCols))
+
+# bind attrition 
+hrOrdCat$Attrition <-  hrCopy$Attrition
+
+# convert to factors
+hrOrdCat <- lapply(hrOrdCat, factor)
+
+# unable to access class
+#fitLDA = MASS::lda(Attrition ~ ., data = hrOrdCat)
+# unable to plot out file from LDA
+fitLDA = MASS::lda(Attrition ~ ., data = hrOrdCat, CV = TRUE)
+
+# prediction values from LDA
+predLDA = fitLDA$class
+
+# confusion matrix
+caret::confusionMatrix(data=predLDA, reference = hrOrdCat$Attrition,
+                       positive = "Yes")
+
+```
+
+
+
