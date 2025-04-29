@@ -1,16 +1,16 @@
 # Data Science Projects ( *** Work in Progress ** )
 
 **Informaion:**
-> * [United Network for Organ Sharing (UNOS)](https://github.com/SirErikPak/Profolio/tree/main/UNOS)
+> * [United Network for Organ Sharing (UNOS)](https://github.com/SirErikPak/Portfolio/tree/main/UNOS)
    > * On going Reesearch Project
    
-> * [AutoEncode & Decoder OpenCV](https://github.com/SirErikPak/Profolio/tree/main/Encoder_Decoder)
+> * [AutoEncode & Decoder OpenCV](https://github.com/SirErikPak/Portfolio/tree/main/Encoder_Decoder)
 
-> * [Lane Detection](https://github.com/SirErikPak/Profolio/tree/main/Lane_Detection)
+> * [Lane Detection](https://github.com/SirErikPak/Portfolio/tree/main/Lane_Detection)
 
-> * [HR Attrition](https://github.com/SirErikPak/Profolio/tree/main/HR_Attrition)
+> * [HR Attrition](https://github.com/SirErikPak/Portfolio/tree/main/HR_Attrition)
 
-> * [Movie Recommender](https://github.com/SirErikPak/Profolio/tree/main/Movie_Recommender) 
+> * [Movie Recommender](https://github.com/SirErikPak/Portfolio/tree/main/Movie_Recommender) 
 
 > * [Gesture Recognition](https://github.com/SirErikPak/Portfolio/tree/main/Gesture_Recognition)
 
