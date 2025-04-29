@@ -12,7 +12,7 @@
 
 > * [Movie Recommender](https://github.com/SirErikPak/Profolio/tree/main/Movie_Recommender) 
 
-> *[Gesture Recognition](https://github.com/SirErikPak/Portfolio/tree/main/Gesture_Recognition)
+> * [Gesture Recognition](https://github.com/SirErikPak/Portfolio/tree/main/Gesture_Recognition)
 
 
 > * [Sentiment analysis with tweets](https://github.com/Erik1120/Profolio/blob/main/Notebook/Sentiment_Data.ipynb)
