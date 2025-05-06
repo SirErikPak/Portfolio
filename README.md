@@ -2,20 +2,37 @@
 
 **Informaion:**
 > * [United Network for Organ Sharing (UNOS)](https://github.com/SirErikPak/Portfolio/tree/main/UNOS)
-   > * On going Reesearch Project
+>   * On going Reesearch Project
    
 > * [AutoEncode & Decoder OpenCV](https://github.com/SirErikPak/Portfolio/tree/main/Encoder_Decoder)
+>     * Autoencoder and Decoder: CT Lung Images
 
 > * [Lane Detection](https://github.com/SirErikPak/Portfolio/tree/main/Lane_Detection)
-
+>   * An Image Analysis Technique for Lane detection 
+    
 > * [HR Attrition](https://github.com/SirErikPak/Portfolio/tree/main/HR_Attrition)
+>     * Linear Regression (Ridge/Lasso/ElasticNet)
+>     * Logistic Regression
+>     * Factor Analysis
 
-> * [Movie Recommender](https://github.com/SirErikPak/Portfolio/tree/main/Movie_Recommender) 
+> * [Movie Recommender](https://github.com/SirErikPak/Portfolio/tree/main/Movie_Recommender)
+>     * Movie Recommender System with Regression and Classification
+>     * Simple/Content-Based/Hybrid Recommender System
 
 > * [Gesture Recognition](https://github.com/SirErikPak/Portfolio/tree/main/Gesture_Recognition)
+>     *  MobileNet_LSTM refers to the integration of MobileNet-a lightweight, efficient convolutional neural network (CNN) architecture-with Long Short-Term Memory (LSTM) networks, a type of recurrent neural network (RNN) designed to capture temporal dependencies.
+
+> * [SQL](https://github.com/SirErikPak/Portfolio/tree/main/SQL)
+>     * Store Procedures/Triggers/Views 
+
+> * [Advance Data Analysis: R](https://github.com/SirErikPak/Portfolio/tree/main/Data_Analysis)
+>     * Factor Analysis: Factor Analysis is a statistical method used to identify underlying relationships (factors) among observed variables.
+>     * Parallel Analysis: Parallel Analysis is not a type of factor analysis, but a statistical technique used within factor analysis to objectively determine the number of factors to retain.
+>     * Principal Component Analysis (PCA)
 
 
-> * [Sentiment analysis with tweets](https://github.com/Erik1120/Profolio/blob/main/Notebook/Sentiment_Data.ipynb)
+
+<!-- > * [Sentiment analysis with tweets](https://github.com/Erik1120/Profolio/blob/main/Notebook/Sentiment_Data.ipynb)
     > * [Kaggle](https://www.kaggle.com/kazanova/sentiment140)
        > * This exercise is the tweet sentiment dataset which contains 1.6 million tweets. The tweets are labeled with (0 = negative, 4 = positive). In this exercise, the data ONLY contains a positive and negative sentiment, a classic balanced binary classification exercise.
         - Lancaster Stemmer
@@ -93,4 +110,4 @@
 
 > * [Reshaping data](https://github.com/Erik1120/Profolio/blob/main/Pandas/ReshapingDataUsingPandas.ipynb)
 
-> * [List/Tuple/Set](https://github.com/Erik1120/Profolio/blob/main/Notebook/ist_Set_Tuple_Dict.ipynb.ipynb)
+> * [List/Tuple/Set](https://github.com/Erik1120/Profolio/blob/main/Notebook/ist_Set_Tuple_Dict.ipynb.ipynb) -->
